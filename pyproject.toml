@@ -31,7 +31,7 @@ license = {file="LICENSE"}
 authors = [{name = "Siyu He", email = "siyuhe@stanford.edu"}]
 
 [project.optional-dependencies]
-# 药物结构支持 (需要通过 conda 安装 rdkit)
+# 药物结构支持
 drug = [
     "rdkit>=2023.3.1",
 ]
