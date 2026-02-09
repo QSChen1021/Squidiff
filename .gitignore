@@ -1,0 +1,103 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+.virtualenv/
+*.lock
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+.idea_modules/
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# Scanpy / AnnData
+*.h5ad
+*.h5seurat
+*.loom
+*.h5
+datasets/
+
+# Model Checkpoints & Logs
+logger_files/
+logs/
+*.pt
+*.pth
+*.ckpt
+*.ckpt.*
+model*.pt
+checkpoint*/
+wandb/
+mlruns/
+
+# Cache
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.cache/
+*.log
+*.log.*
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Squidiff specific
+Squidiff.egg-info/
+.pytest_cache/
+results/
+outputs/
+experiments/
+
+# Data files (uncomment if needed)
+# *.csv
+# *.txt
+# *.tsv
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
