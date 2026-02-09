@@ -90,6 +90,12 @@ results/
 outputs/
 experiments/
 
+# Local data / model dirs（不进 git）
+data/
+result/
+model/
+models/
+
 # Data files (uncomment if needed)
 # *.csv
 # *.txt

@@ -1,0 +1,49 @@
+---
+description: Squidiff 项目概览与开发与调试规范
+alwaysApply: true
+---
+
+# Squidiff 项目开发导航
+
+本规则为 AI 助手提供 Squidiff 项目的全局背景与入口结构，所有与模型训练 / 推理 / 数据处理相关的开发与调试都应优先参考本规则。
+
+## 项目定位与技术栈
+
+- **项目目标**: 基于扩散模型预测细胞发育过程与对药物/基因扰动的转录组响应。
+- **核心技术栈**: Python 3.8+、PyTorch、AnnData (`.h5ad`)、setuptools，可选 PyQt5 (GUI)、rich/click (CLI)。
+- **详细说明**: 参见开发指南 `[CLAUDE.md](mdc:CLAUDE.md)` 与项目说明 `[README.md](mdc:README.md)`。
+
+## 代码结构与关键入口
+
+- **核心包目录**: `Squidiff/`
+  - `Squidiff/diffusion.py`: 扩散模型核心实现。
+  - `Squidiff/MLPModel.py`: MLP 神经网络架构。
+  - 其他核心模块（如 `losses.py`、重采样与时间步调度等）也应放在该目录下。
+- **训练入口脚本**: 根目录 `train_squidiff.py`
+  - 负责模型训练流程与命令行参数解析。
+  - 所有新增训练相关功能应优先在此脚本或其调用链中扩展。
+- **推理/采样入口脚本**: 根目录 `sample_squidiff.py`
+  - 负责加载训练好的模型并执行推理/采样。
+  - 推理接口（如 `sampler`、`pred` 等）应保持稳定 API 以便其他脚本复用。
+- **数据集与预处理**:
+  - 单细胞数据集与相关资源统一放在 `datasets/` 目录。
+  - 单细胞数据加载与处理逻辑集中在 `scrna_datasets.py` 中。
+
+## 数据与调试约定
+
+- **输入数据格式**:
+  - 使用 AnnData `h5ad` 文件，必须包含计数矩阵 `.X` 与元数据 `.obs`，如有药物信息则附加相应字段。
+- **常见调试优先级**:
+  - 先检查 `gene_size`、`output_dim` 与实际数据维度是否匹配。
+  - GPU 内存不足时优先降低 `batch_size` 或 `gene_size`。
+  - 训练不稳定时优先排查学习率与扩散时间步配置，而非盲目修改模型结构。
+
+## 新功能扩展流程
+
+添加新功能（如新损失函数、新扩散调度策略、新数据处理流程）时，统一遵循：
+
+1. **实现**: 在对应模块（如 `Squidiff/` 或 `scrna_datasets.py`）中增加核心逻辑。
+2. **测试**: 使用小规模 `h5ad` 数据在本地快速验证。
+3. **封装**: 将功能纳入 `train_squidiff.py` / `sample_squidiff.py` 的参数或调用路径中，保持对外接口清晰。
+4. **文档**: 同步更新 `[README.md](mdc:README.md)` 或相关说明文件，确保训练/推理命令示例与实际代码保持一致。
+
