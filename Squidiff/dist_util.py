@@ -39,7 +39,7 @@ def setup_dist():
         os.environ["MASTER_PORT"] = "12355"
 
     rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
+    _ = int(os.environ["WORLD_SIZE"])  # noqa: F841
 
     os.environ["CUDA_VISIBLE_DEVICES"] = f"{rank % GPUS_PER_NODE}"
 
