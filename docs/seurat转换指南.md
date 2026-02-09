@@ -5,9 +5,9 @@
 ## 目录
 
 - [概述](#概述)
+- [数据要求详解](#数据要求详解)
 - [环境准备](#环境准备)
 - [转换流程](#转换流程)
-- [数据格式要求](#数据格式要求)
 - [完整示例](#完整示例)
 - [常见问题](#常见问题)
 
@@ -17,10 +17,152 @@
 
 Squidiff 使用 Python 的 AnnData 格式（.h5ad 文件）存储单细胞数据。如果您使用的是 Seurat (R) 进行数据分析，需要先将数据转换为 h5ad 格式。
 
-本指南提供两种转换方法：
+本指南提供：
+1. **详细的数据要求说明** - 包括细胞数、基因数、metadata 列等
+2. **完整的转换流程** - 从 Seurat 到 h5ad 的多种方法
+3. **验证检查清单** - 确保数据符合 Squidiff 要求
 
-1. **使用 `SeuratDisk`**（推荐）- 专门的 R/Python 数据转换工具
-2. **使用 `scRNA-seq`** - 传统的单细胞数据转换流程
+---
+
+## 数据要求详解
+
+### 核心数据结构
+
+Squidiff 基于 AnnData 对象存储数据，核心结构如下：
+
+| 组件 | 说明 | 数据类型 | 必需 |
+|------|------|----------|------|
+| `adata.X` | 基因表达矩阵 | `numpy.ndarray` 或 `scipy.sparse.spmatrix` | ✅ 是 |
+| `adata.obs` | 细胞元数据 | `pandas.DataFrame` | ✅ 是 |
+| `adata.var` | 基因信息 | `pandas.DataFrame` | ✅ 是 |
+| `adata.obs['Group']` | 细胞分组标签 | `str`/`int` | ✅ 是 |
+
+### 维度要求
+
+#### 1. 基因数 (Gene Size)
+
+基因数必须与训练时的 `--gene_size` 参数**完全一致**。
+
+```python
+# 示例：如果训练时设置 gene_size=500
+adata.n_vars  # 必须等于 500
+```
+
+**常见基因数范围**：
+- **小规模**: 100-500 基因（快速测试）
+- **中规模**: 500-2000 基因（常用）
+- **大规模**: 2000-10000 基因（完整转录组）
+
+**重要**: `gene_size` 既影响输入维度，也影响模型结构参数。
+
+#### 2. 细胞数 (Cell Count)
+
+| 细胞数范围 | 推荐场景 | batch_size 建议 |
+|-----------|---------|----------------|
+| 1,000 - 10,000 | 小型数据集/快速测试 | 32-64 |
+| 10,000 - 100,000 | 标准数据集 | 64-128 |
+| >100,000 | 大规模数据集 | 128-256 |
+
+**最低要求**: 建议至少 **500 个细胞**以确保模型训练稳定性。
+
+#### 3. 表达矩阵格式
+
+```python
+# Squidiff 支持两种格式：
+
+# 格式 1: 密集矩阵 (numpy.ndarray)
+type(adata.X) == np.ndarray  # True
+
+# 格式 2: 稀疏矩阵 (scipy.sparse)
+from scipy.sparse import issparse
+issparse(adata.X)  # True
+```
+
+**推荐**: 对于超过 10,000 基因的数据集，使用**稀疏矩阵**以节省内存。
+
+### Metadata (元数据) 要求
+
+#### 必需列
+
+| 列名 | 数据类型 | 说明 | 使用场景 |
+|------|---------|------|----------|
+| `Group` | `str` 或 `int` | 细胞分组/条件标签 | **所有场景必需** |
+
+#### 使用药物结构时的必需列
+
+当 `--use_drug_structure True` 时，需要额外添加：
+
+| 列名 | 数据类型 | 说明 | 示例值 |
+|------|---------|------|--------|
+| `SMILES` | `str` | 药物 SMILES 字符串 | `"CC(=O)OC1=CC=CC=C1C(=O)O"` |
+| `dose` | `float` | 药物剂量 | `1.0` (μM) |
+
+**SMILES 格式要求**：
+- 必须是有效的 SMILES 字符串
+- 药物组合用 `+` 连接（如 `comb_num > 1`）
+- 示例：`"CC(=O)OC1=CC=CC=C1C(=O)O+CC(=O)NC1=CC=C(C=C1)O"`
+
+#### 可选列（推荐添加）
+
+| 列名 | 说明 | 用途 |
+|------|------|------|
+| `cell_type` | 细胞类型 | 结果分析和可视化 |
+| `condition` | 实验条件 | 对照组/处理组筛选 |
+| `batch` | 批次信息 | 批次效应校正 |
+| `time_point` | 时间点 | 时间序列分析 |
+
+### 对照组数据要求
+
+使用药物结构时 (`--use_drug_structure True`)：
+
+1. **必需单独的对照组文件**
+2. 对照组细胞的 `gene_size` 必须与处理组**完全一致**
+3. 对照组**不需要** `SMILES` 和 `dose` 列
+
+```python
+# 对照组数据结构示例
+control_adata.X.shape      # (N_cells, gene_size)
+'SMILES' not in control_adata.obs.columns  # True - 对照组不需要
+```
+
+### 数据预处理建议
+
+#### 在 R 中预处理（推荐）
+
+```r
+# 标准单细胞预处理流程
+library(Seurat)
+
+# 1. 质量控制
+seurat_obj <- subset(seurat_obj, subset = nFeature_RNA > 200 & nFeature_RNA < 5000)
+seurat_obj <- subset(seurat_obj, subset = percent.mt < 20)
+
+# 2. 标准化
+seurat_obj <- NormalizeData(seurat_obj, normalization.method = "LogNormalize", scale.factor = 10000)
+seurat_obj <- FindVariableFeatures(seurat_obj, selection.method = "vst", nfeatures = 2000)
+
+# 3. 如果使用特定基因集
+# seurat_obj <- seurat_obj[VariableFeatures(seurat_obj), ]
+```
+
+#### 在 Python 中预处理
+
+```python
+import scanpy as sc
+
+# 质量控制
+sc.pp.filter_cells(adata, min_genes=200)
+sc.pp.filter_genes(adata, min_cells=3)
+
+# 线性回归校正线粒体基因比例
+adata.obs['pct_counts_mt'] = np.sum(
+    adata[:, adata.var_names.str.startswith('MT-')].X, axis=1
+) / np.sum(adata.X, axis=1) * 100
+
+# 标准化
+sc.pp.normalize_total(adata, target_sum=1e4)
+sc.pp.log1p(adata)
+```
 
 ---
 
@@ -44,7 +186,7 @@ library(SeuratDisk)
 
 ```bash
 # 安装依赖
-uv pip install anndata scipy scikit-learn
+uv pip install anndata scipy scikit-learn seurat-disk
 ```
 
 ### 方法二：使用 loom/py文件
@@ -64,15 +206,21 @@ install.packages("reticulate")
 #### 步骤 1：在 R 中保存 Seurat 对象为 .h5seurat 格式
 
 ```r
-# 加载您的 Seurat 对象
-# 假设您的对象名为 seurat_obj
 library(Seurat)
 library(SeuratDisk)
 
 # 检查对象结构
 print(seurat_obj)
+print(paste("细胞数:", ncol(seurat_obj)))
+print(paste("基因数:", nrow(seurat_obj)))
+
 # 检查元数据
 head(seurat_obj@meta.data)
+
+# 确保 Group 列存在
+if (!"Group" %in% colnames(seurat_obj@meta.data)) {
+  seurat_obj$Group <- seurat_obj$seurat_clusters  # 或其他分组信息
+}
 
 # 保存为 .h5seurat 格式
 Save(seurat_obj, filename = "my_data.h5seurat")
@@ -82,6 +230,7 @@ Save(seurat_obj, filename = "my_data.h5seurat")
 
 ```python
 from seurat_disk import SeuratDisk
+import scanpy as sc
 
 # 转换为 h5ad
 SeuratDisk.convert(
@@ -91,9 +240,10 @@ SeuratDisk.convert(
 )
 
 # 验证转换结果
-import scanpy as sc
 adata = sc.read_h5ad("my_data.h5ad")
-print(adata)
+print(f"细胞数: {adata.n_obs}")
+print(f"基因数: {adata.n_vars}")
+print(f"元数据列: {adata.obs.columns.tolist()}")
 ```
 
 ### 方法二：通过 Loom 格式转换
@@ -102,14 +252,10 @@ print(adata)
 
 ```r
 library(Seurat)
+library(loomR)
 
 # 确保 Seurat 对象已经标准化
 seurat_obj <- NormalizeData(seurat_obj)
-seurat_obj <- ScaleData(seurat_obj)
-
-# 导出为 loom 格式
-library(Seurat)
-library(loomR)
 
 # 创建 loom 文件
 lfile <- create("my_data.loom")
@@ -130,7 +276,6 @@ close(lfile)
 
 ```python
 import scanpy as sc
-import anndata
 
 # 读取 loom 文件
 adata = sc.read_loom("my_data.loom")
@@ -158,9 +303,7 @@ write.csv(seurat_obj@meta.data, file = "metadata.csv")
 
 ```python
 import pandas as pd
-import scanpy as sc
 from anndata import AnnData
-import numpy as np
 
 # 读取数据
 expr_df = pd.read_csv("expression_matrix.csv", index_col=0)
@@ -179,58 +322,6 @@ adata.write_h5ad("my_data.h5ad")
 
 ---
 
-## 数据格式要求
-
-Squidiff 需要以下数据结构：
-
-### 1. 基础数据结构
-
-```python
-import scanpy as sc
-
-# 必需字段
-adata.X                    # 基因表达矩阵 (cells x genes)
-adata.obs                  # 细胞元数据 (DataFrame)
-adata.var                  # 基因信息 (DataFrame)
-
-# 示例数据结构
-# adata.obs 包含以下列：
-# - Group: 细胞分组/条件（必需）
-# - cell_type: 细胞类型（可选）
-# - batch: 批次信息（可选）
-```
-
-### 2. 药物扰动数据（使用药物结构时）
-
-如果使用 `--use_drug_structure True`，需要在元数据中添加：
-
-```python
-# 在 adata.obs 中添加：
-adata.obs['SMILES'] = [
-    'CC(=O)OC1=CC=CC=C1C(=O)O',  # 阿司匹林示例
-    'CC(=O)NC1=CC=C(C=C1)O',     # 对乙酰氨基酚示例
-    # ... 每个细胞对应的药物 SMILES
-]
-
-adata.obs['dose'] = [
-    1.0,   # 药物剂量（μM 或其他单位）
-    0.5,
-    # ... 每个细胞对应的药物剂量
-]
-```
-
-### 3. 对照组数据
-
-使用药物结构时，需要单独的对照组数据：
-
-```python
-# 对照组 AnnData 对象，不包含药物信息
-control_adata = adata[adata.obs['condition'] == 'control']
-control_adata.write_h5ad("control_data.h5ad")
-```
-
----
-
 ## 完整示例
 
 ### 示例 1：药物扰动数据转换
@@ -241,25 +332,53 @@ control_adata.write_h5ad("control_data.h5ad")
 library(Seurat)
 library(SeuratDisk)
 
-# 假设您有一个药物处理的 Seurat 对象
-# 确保元数据包含以下列：
-# - condition: 处理条件（如 'drug_A', 'control'）
-# - drug_name: 药物名称
-# - dose: 药物剂量
+# ========== 数据检查 ==========
+print(paste("细胞数:", ncol(seurat_obj)))
+print(paste("基因数:", nrow(seurat_obj)))
+print(colnames(seurat_obj@meta.data))
 
-# 添加 SMILES 列（如果还没有）
+# ========== 准备元数据 ==========
+# 确保 Group 列存在（Squidiff 必需）
+if (!"Group" %in% colnames(seurat_obj@meta.data)) {
+  # 创建 Group 列：条件_细胞类型
+  seurat_obj$Group <- paste0(
+    seurat_obj$condition,
+    "_",
+    seurat_obj$cell_type
+  )
+}
+
+# 添加 SMILES 列（使用药物结构时必需）
 smiles_map <- c(
   "drug_A" = "CC(=O)OC1=CC=CC=C1C(=O)O",  # 阿司匹林
-  "drug_B" = "CC(=O)NC1=CC=C(C=C1)O"      # 对乙酰氨基酚
+  "drug_B" = "CC(=O)NC1=CC=C(C=C1)O",     # 对乙酰氨基酚
+  "drug_C" = "CC(C)CC1=CC=C(C=C1)C(C)C=C2"  # 布洛芬
 )
 
 seurat_obj$SMILES <- smiles_map[seurat_obj$drug_name]
 
-# 检查数据
-head(seurat_obj@meta.data)
+# 检查 dose 列
+if (!"dose" %in% colnames(seurat_obj@meta.data)) {
+  seurat_obj$dose <- 1.0  # 默认剂量
+}
 
-# 保存为 h5seurat
-Save(seurat_obj, filename = "drug_perturbation.h5seurat")
+# 验证元数据
+required_cols <- c("Group", "SMILES", "dose")
+missing_cols <- required_cols[!required_cols %in% colnames(seurat_obj@meta.data)]
+if (length(missing_cols) > 0) {
+  stop(paste("缺少必需列:", paste(missing_cols, collapse=", ")))
+}
+
+# ========== 基因选择（可选） ==========
+# 如果需要限制基因数，选择高变基因
+seurat_obj <- FindVariableFeatures(seurat_obj, selection.method = "vst", nfeatures = 2000)
+variable_genes <- VariableFeatures(seurat_obj)
+seurat_obj_subset <- seurat_obj[variable_genes, ]
+
+print(paste("选择的基因数:", nrow(seurat_obj_subset)))
+
+# ========== 保存 ==========
+Save(seurat_obj_subset, filename = "drug_perturbation.h5seurat")
 ```
 
 #### Python 端代码
@@ -268,36 +387,63 @@ Save(seurat_obj, filename = "drug_perturbation.h5seurat")
 from seurat_disk import SeuratDisk
 import scanpy as sc
 import pandas as pd
+import numpy as np
 
-# 转换为 h5ad
+# ========== 转换 ==========
 SeuratDisk.convert(
     "drug_perturbation.h5seurat",
     dest="h5ad",
     output="drug_perturbation.h5ad"
 )
 
-# 读取并验证
+# ========== 验证数据 ==========
 adata = sc.read_h5ad("drug_perturbation.h5ad")
-print(adata)
-print(adata.obs.columns)
 
-# 检查必需的列
-assert 'SMILES' in adata.obs.columns, "缺少 SMILES 列"
-assert 'dose' in adata.obs.columns, "缺少 dose 列"
-assert 'Group' in adata.obs.columns, "缺少 Group 列"
+print(f"细胞数: {adata.n_obs}")
+print(f"基因数: {adata.n_vars}")
+print(f"数据类型: {type(adata.X)}")
+print(f"元数据列: {adata.obs.columns.tolist()}")
 
-# 分离对照组
-control_mask = adata.obs['condition'] == 'control'
-control_adata = adata[control_mask].copy()
-treated_adata = adata[~control_mask].copy()
+# ========== 检查必需列 ==========
+required_cols = ['Group', 'SMILES', 'dose']
+for col in required_cols:
+    if col not in adata.obs.columns:
+        raise ValueError(f"缺少必需列: {col}")
+    print(f"✓ {col}: {adata.obs[col].nunique()} 个唯一值")
 
-# 保存
-control_adata.write_h5ad("control_data.h5ad")
-treated_adata.write_h5ad("treated_data.h5ad")
+# ========== 检查 SMILES 格式 ==========
+from rdkit import Chem
 
-print("转换完成！")
-print(f"对照组细胞数: {control_adata.n_obs}")
-print(f"处理组细胞数: {treated_adata.n_obs}")
+def validate_smiles(smiles):
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        return mol is not None
+    except:
+        return False
+
+adata.obs['valid_smiles'] = adata.obs['SMILES'].apply(validate_smiles)
+print(f"\n有效 SMILES: {adata.obs['valid_smiles'].sum()}/{len(adata)}")
+
+if adata.obs['valid_smiles'].sum() < len(adata):
+    print("⚠️ 警告: 存在无效的 SMILES 字符串")
+    invalid = adata[~adata.obs['valid_smiles']]
+    print(invalid.obs[['SMILES', 'drug_name']])
+
+# ========== 分离对照组和处理组 ==========
+if 'condition' in adata.obs.columns:
+    control_mask = adata.obs['condition'] == 'control'
+    control_adata = adata[control_mask].copy()
+    treated_adata = adata[~control_mask].copy()
+
+    print(f"\n对照组细胞数: {control_adata.n_obs}")
+    print(f"处理组细胞数: {treated_adata.n_obs}")
+
+    # 保存
+    control_adata.write_h5ad("control_data.h5ad")
+    treated_adata.write_h5ad("treated_data.h5ad")
+else:
+    # 如果没有 condition 列，保存全部数据
+    adata.write_h5ad("drug_data.h5ad")
 ```
 
 ### 示例 2：细胞分化轨迹数据
@@ -308,19 +454,22 @@ print(f"处理组细胞数: {treated_adata.n_obs}")
 library(Seurat)
 library(SeuratDisk)
 
-# 假设您有时间序列的分化数据
-# 元数据包含：
-# - time_point: 时间点（如 'day0', 'day1', 'day5'）
-# - cell_type: 细胞类型
+# ========== 检查数据 ==========
+print(paste("细胞数:", ncol(seurat_obj)))
+print(paste("基因数:", nrow(seurat_obj)))
 
-# 创建 Group 列（Squidiff 需要此列）
+# ========== 创建 Group 列 ==========
+# Squidiff 需要 Group 列来区分不同条件
 seurat_obj$Group <- paste0(
   seurat_obj$time_point,
   "_",
   seurat_obj$cell_type
 )
 
-# 保存
+# 查看分组情况
+print(table(seurat_obj$Group))
+
+# ========== 保存 ==========
 Save(seurat_obj, filename = "differentiation.h5seurat")
 ```
 
@@ -330,28 +479,131 @@ Save(seurat_obj, filename = "differentiation.h5seurat")
 from seurat_disk import SeuratDisk
 import scanpy as sc
 
-# 转换
+# ========== 转换 ==========
 SeuratDisk.convert(
     "differentiation.h5seurat",
     dest="h5ad",
     output="differentiation.h5ad"
 )
 
-# 读取和验证
+# ========== 验证 ==========
 adata = sc.read_h5ad("differentiation.h5ad")
+
+print(f"细胞数: {adata.n_obs}")
+print(f"基因数: {adata.n_vars}")
+print("\nGroup 分布:")
 print(adata.obs['Group'].value_counts())
 
-# 数据预处理（可选）
-import scvelo as scv
-# 进行质量控制和标准化
+# ========== 数据预处理（可选） ==========
+# 质量控制
 sc.pp.filter_cells(adata, min_genes=200)
 sc.pp.filter_genes(adata, min_cells=3)
+
+# 标准化
 adata.raw = adata.copy()
 sc.pp.normalize_total(adata, target_sum=1e4)
 sc.pp.log1p(adata)
 
-# 保存处理后的数据
+# ========== 保存 ==========
 adata.write_h5ad("differentiation_processed.h5ad")
+
+print("\n✓ 转换完成！")
+print(f"最终细胞数: {adata.n_obs}")
+print(f"最终基因数: {adata.n_vars}")
+```
+
+### 示例 3：数据验证函数
+
+在 Python 中创建一个完整的验证函数：
+
+```python
+import scanpy as sc
+from rdkit import Chem
+import numpy as np
+
+def validate_squidiff_data(adata, use_drug_structure=False):
+    """
+    验证 AnnData 对象是否符合 Squidiff 要求
+
+    参数:
+        adata: AnnData 对象
+        use_drug_structure: 是否使用药物结构
+
+    返回:
+        is_valid: bool
+        issues: list of str
+    """
+    issues = []
+
+    # 检查基本结构
+    if adata.X is None:
+        issues.append("❌ 缺少表达矩阵 (adata.X)")
+        return False, issues
+
+    # 检查维度
+    n_cells, n_genes = adata.n_obs, adata.n_vars
+    print(f"细胞数: {n_cells}")
+    print(f"基因数: {n_genes}")
+
+    if n_cells < 500:
+        issues.append(f"⚠️ 细胞数较少 ({n_cells})，建议至少 500 个")
+
+    if n_genes < 50:
+        issues.append(f"⚠️ 基因数过少 ({n_genes})，建议至少 100 个")
+
+    # 检查必需列
+    if 'Group' not in adata.obs.columns:
+        issues.append("❌ 缺少必需列: Group")
+    else:
+        print(f"✓ Group 列存在，{adata.obs['Group'].nunique()} 个唯一值")
+
+    # 检查药物结构相关列
+    if use_drug_structure:
+        if 'SMILES' not in adata.obs.columns:
+            issues.append("❌ 使用药物结构时缺少必需列: SMILES")
+        else:
+            # 验证 SMILES 格式
+            valid_count = 0
+            for smiles in adata.obs['SMILES']:
+                if Chem.MolFromSmiles(smiles) is not None:
+                    valid_count += 1
+            if valid_count < len(adata):
+                issues.append(f"⚠️ 有 {len(adata) - valid_count} 个无效的 SMILES")
+            else:
+                print(f"✓ SMILES 格式正确")
+
+        if 'dose' not in adata.obs.columns:
+            issues.append("❌ 使用药物结构时缺少必需列: dose")
+        else:
+            print(f"✓ dose 列存在，范围: {adata.obs['dose'].min():.2f} - {adata.obs['dose'].max():.2f}")
+
+    # 检查数据类型
+    if isinstance(adata.X, np.ndarray):
+        print(f"✓ 密集矩阵格式")
+    else:
+        from scipy.sparse import issparse
+        if issparse(adata.X):
+            print(f"✓ 稀疏矩阵格式")
+        else:
+            issues.append(f"⚠️ 未知的数据类型: {type(adata.X)}")
+
+    # 检查缺失值
+    if np.isnan(adata.X.data if hasattr(adata.X, 'data') else adata.X).any():
+        issues.append("⚠️ 存在缺失值 (NaN)")
+
+    # 总结
+    if len(issues) == 0:
+        print("\n✓ 数据验证通过！")
+        return True, []
+    else:
+        print("\n发现问题:")
+        for issue in issues:
+            print(issue)
+        return False, issues
+
+# 使用示例
+adata = sc.read_h5ad("my_data.h5ad")
+is_valid, issues = validate_squidiff_data(adata, use_drug_structure=True)
 ```
 
 ---
@@ -362,8 +614,7 @@ adata.write_h5ad("differentiation_processed.h5ad")
 
 **原因**: 可能是使用了错误的 slot（如 `counts` 而非 `data`）
 
-**解决**: 在 R 中确保导出正确的数据
-
+**解决**:
 ```r
 # 使用标准化后的数据
 GetAssayData(seurat_obj, slot = "data")  # 推荐
@@ -376,8 +627,7 @@ GetAssayData(seurat_obj, slot = "counts")
 
 **原因**: SeuratDisk 版本不兼容或元数据格式问题
 
-**解决**: 检查并转换元数据格式
-
+**解决**:
 ```r
 # 确保 meta.data 是 data.frame
 seurat_obj@meta.data <- as.data.frame(seurat_obj@meta.data)
@@ -386,25 +636,38 @@ seurat_obj@meta.data <- as.data.frame(seurat_obj@meta.data)
 print(colnames(seurat_obj@meta.data))
 ```
 
-### Q3: 基因名称不匹配
+### Q3: 基因数不匹配错误
+
+**错误信息**: `RuntimeError: mat1 and mat2 shapes cannot be multiplied`
+
+**原因**: `gene_size` 参数与实际数据基因数不一致
+
+**解决**:
+```python
+# 检查实际基因数
+adata.n_vars
+
+# 训练时使用正确的 gene_size
+python train_squidiff.py --gene_size {adata.n_vars} ...
+```
+
+### Q4: 基因名称不匹配
 
 **原因**: R 和 Python 对基因名的处理可能不同
 
-**解决**: 统一基因名格式
-
+**解决**:
 ```python
-# 在 Python 中处理基因名
+# 统一基因名格式
 adata.var_names = adata.var_names.str.upper()  # 转为大写
 # 或
 adata.var_names = adata.var_names.str.strip()  # 去除空格
 ```
 
-### Q4: 内存不足
+### Q5: 内存不足
 
 **原因**: 数据集过大
 
-**解决**: 分批处理或使用稀疏矩阵
-
+**解决**:
 ```r
 # 在 R 中创建稀疏矩阵
 library(Matrix)
@@ -414,12 +677,11 @@ seurat_obj@assays$RNA@data <- Matrix(
 )
 ```
 
-### Q5: SMILES 格式错误
+### Q6: SMILES 格式错误
 
 **原因**: SMILES 字符串格式不正确
 
-**解决**: 验证 SMILES 格式
-
+**解决**:
 ```python
 from rdkit import Chem
 
@@ -439,6 +701,48 @@ print(adata.obs['valid_smiles'].value_counts())
 adata = adata[adata.obs['valid_smiles']].copy()
 ```
 
+### Q7: 找不到 Group 列
+
+**错误信息**: `KeyError: 'Group'`
+
+**解决**:
+```r
+# 在 R 中创建 Group 列
+seurat_obj$Group <- seurat_obj$seurat_clusters  # 使用聚类结果
+# 或
+seurat_obj$Group <- seurat_obj$cell_type  # 使用细胞类型
+```
+
+---
+
+## 附录：数据要求检查清单
+
+### 转换前检查（R 端）
+
+- [ ] 细胞数 ≥ 500
+- [ ] 基因数已确定（将用于 `--gene_size` 参数）
+- [ ] `Group` 列已创建
+- [ ] 如使用药物结构：`SMILES` 和 `dose` 列已添加
+- [ ] 已进行质量控制和标准化
+- [ ] 数据使用正确的 slot (`data` 或 `counts`)
+
+### 转换后验证（Python 端）
+
+- [ ] `adata.n_obs`（细胞数）正确
+- [ ] `adata.n_vars`（基因数）与 `--gene_size` 一致
+- [ ] `adata.obs['Group']` 存在
+- [ ] 如使用药物结构：`adata.obs['SMILES']` 和 `adata.obs['dose']` 存在
+- [ ] SMILES 格式验证通过
+- [ ] 无缺失值（NaN）
+- [ ] 数据类型正确（ndarray 或 sparse）
+
+### 训练前准备
+
+- [ ] `--gene_size` 参数与 `adata.n_vars` 一致
+- [ ] `--output_dim` 参数设置（通常等于 `gene_size`）
+- [ ] 如使用药物结构：提供对照组数据路径
+- [ ] `--batch_size` 根据细胞数合理设置
+
 ---
 
 ## 附录：快速参考
@@ -448,6 +752,8 @@ adata = adata[adata.obs['valid_smiles']].copy()
 ```r
 # 查看 Seurat 对象
 print(seurat_obj)
+print(paste("细胞数:", ncol(seurat_obj)))
+print(paste("基因数:", nrow(seurat_obj)))
 head(seurat_obj@meta.data)
 colnames(seurat_obj@meta.data)
 
@@ -456,6 +762,9 @@ seurat_obj$new_column <- values
 
 # 筛选细胞
 seurat_obj_subset <- subset(seurat_obj, condition == "treated")
+
+# 筛选基因
+seurat_obj <- seurat_obj[variable_genes, ]
 
 # 保存
 Save(seurat_obj, filename = "data.h5seurat")
@@ -471,11 +780,16 @@ adata = sc.read_h5ad("data.h5ad")
 
 # 查看数据
 print(adata)
+print(f"细胞数: {adata.n_obs}")
+print(f"基因数: {adata.n_vars}")
 adata.obs.head()
 adata.var.head()
 
 # 筛选细胞
 adata_subset = adata[adata.obs['condition'] == 'treated'].copy()
+
+# 筛选基因
+adata_subset = adata[:, adata.var['highly_variable']].copy()
 
 # 保存
 adata.write_h5ad("data.h5ad")
@@ -489,6 +803,7 @@ adata.write_h5ad("data.h5ad")
 - **SeuratDisk 文档**: https://mojaveazure.github.io/seurat-disk/
 - **AnnData 文档**: https://anndata.readthedocs.io/
 - **Scanpy 文档**: https://scanpy.readthedocs.io/
+- **SMILES 格式**: https://www.daylight.com/dayhtml/doc/theory/theory.smiles.html
 
 ---
 
