@@ -168,9 +168,11 @@ sc.pp.log1p(adata)
 
 ## 环境准备
 
-### 方法一：使用 SeuratDisk（推荐）
+### 方法一：使用 SeuratDisk（推荐 - R 端直接导出 h5ad）
 
-#### R 环境（导出 Seurat 对象）
+**注意**: SeuratDisk 是一个 **R 包**，需要在 R 中使用。
+
+#### R 环境（导出 Seurat 对象为 h5ad）
 
 ```r
 # 安装 SeuratDisk
@@ -182,14 +184,16 @@ library(Seurat)
 library(SeuratDisk)
 ```
 
-#### Python 环境（导入并转换为 h5ad）
+#### Python 环境（直接读取 h5ad）
 
 ```bash
 # 安装依赖
-uv pip install anndata scipy scikit-learn seurat-disk
+uv pip install anndata scipy scikit-learn scanpy h5py
 ```
 
-### 方法二：使用 loom/py文件
+**重要**: SeuratDisk 可以在 R 中直接将 Seurat 对象保存为 `.h5ad` 格式，Python 端只需用 `scanpy` 读取即可。
+
+### 方法二：使用 loom/csv 中间格式
 
 ```r
 # 安装依赖
@@ -201,9 +205,11 @@ install.packages("reticulate")
 
 ## 转换流程
 
-### 方法一：SeuratDisk 转换（推荐）
+### 方法一：SeuratDisk 直接导出 h5ad（推荐）
 
-#### 步骤 1：在 R 中保存 Seurat 对象为 .h5seurat 格式
+**说明**: SeuratDisk 支持**直接导出为 h5ad 格式**，无需 Python 端转换。
+
+#### 步骤 1：在 R 中直接保存为 .h5ad 格式
 
 ```r
 library(Seurat)
@@ -222,28 +228,40 @@ if (!"Group" %in% colnames(seurat_obj@meta.data)) {
   seurat_obj$Group <- seurat_obj$seurat_clusters  # 或其他分组信息
 }
 
-# 保存为 .h5seurat 格式
-Save(seurat_obj, filename = "my_data.h5seurat")
+# 保存为 .h5ad 格式（SeuratDisk 支持）
+SaveH5Seurat(seurat_obj, filename = "my_data.h5ad")
 ```
 
-#### 步骤 2：在 Python 中转换为 .h5ad 格式
+#### 步骤 2：在 Python 中直接读取
 
 ```python
-from seurat_disk import SeuratDisk
 import scanpy as sc
 
-# 转换为 h5ad
-SeuratDisk.convert(
-    "my_data.h5seurat",
-    dest = "h5ad",
-    output = "my_data.h5ad"
-)
-
-# 验证转换结果
+# 直接读取 h5ad 文件
 adata = sc.read_h5ad("my_data.h5ad")
+
+# 验证
 print(f"细胞数: {adata.n_obs}")
 print(f"基因数: {adata.n_vars}")
 print(f"元数据列: {adata.obs.columns.tolist()}")
+```
+
+**注意**: 如果 `SaveH5Seurat` 函数不可用，可以使用以下替代方法：
+
+```r
+# 方法 A: 保存为 .h5seurat，然后在 R 中转换
+Save(seurat_obj, filename = "my_data.h5seurat")
+Convert("my_data.h5seurat", dest = "h5ad", overwrite = TRUE)
+
+# 方法 B: 使用 reticulate 调用 Python 的 anndata
+library(reticulate)
+anndata <- import("anndata")
+adata <- anndata$AnnData(
+  X = as.matrix(GetAssayData(seurat_obj, slot = "data")),
+  obs = seurat_obj@meta.data,
+  var = data.frame(row.names = rownames(seurat_obj))
+)
+adata$write_h5ad("my_data.h5ad")
 ```
 
 ### 方法二：通过 Loom 格式转换
@@ -384,19 +402,11 @@ Save(seurat_obj_subset, filename = "drug_perturbation.h5seurat")
 #### Python 端代码
 
 ```python
-from seurat_disk import SeuratDisk
 import scanpy as sc
 import pandas as pd
 import numpy as np
 
-# ========== 转换 ==========
-SeuratDisk.convert(
-    "drug_perturbation.h5seurat",
-    dest="h5ad",
-    output="drug_perturbation.h5ad"
-)
-
-# ========== 验证数据 ==========
+# ========== 直接读取 h5ad（已在 R 端转换） ==========
 adata = sc.read_h5ad("drug_perturbation.h5ad")
 
 print(f"细胞数: {adata.n_obs}")
@@ -476,17 +486,9 @@ Save(seurat_obj, filename = "differentiation.h5seurat")
 #### Python 端代码
 
 ```python
-from seurat_disk import SeuratDisk
 import scanpy as sc
 
-# ========== 转换 ==========
-SeuratDisk.convert(
-    "differentiation.h5seurat",
-    dest="h5ad",
-    output="differentiation.h5ad"
-)
-
-# ========== 验证 ==========
+# ========== 直接读取 h5ad（已在 R 端转换） ==========
 adata = sc.read_h5ad("differentiation.h5ad")
 
 print(f"细胞数: {adata.n_obs}")
