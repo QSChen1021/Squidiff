@@ -165,6 +165,9 @@ tryCatch({
   print("✓ 数据已保存为: mast_cells_200genes.h5ad")
 })
 
+Convert("mast_cells_200genes.h5ad.h5seurat", dest = "h5ad", overwrite = TRUE)
+print("✓ 数据已保存为: mast_cells_200genes.h5ad")
+
 # ============================================================
 # 步骤 8: 数据验证
 # ============================================================
