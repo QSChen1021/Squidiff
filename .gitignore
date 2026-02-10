@@ -51,8 +51,15 @@ env/
 *.loom
 *.h5
 datasets/
+<<<<<<< HEAD
+data/
 
 # Model Checkpoints & Logs
+models/
+=======
+
+# Model Checkpoints & Logs
+>>>>>>> 980c60f2028b280494db618b2a6d73c592438ed4
 logger_files/
 logs/
 *.pt

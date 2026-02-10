@@ -3,7 +3,7 @@ import inspect
 
 from . import diffusion
 from .respace import SpacedDiffusion, space_timesteps
-from .MLPModel import MLPModel
+from .MLPModel import MLPModel, EncoderMLPModel
 
 NUM_CLASSES = 4
 
@@ -199,11 +199,18 @@ def create_classifier(
     classifier_use_scale_shift_norm,
     classifier_pool,
 ):
-    # Note: EncoderUNetModel is not used in this project
-    # This function is kept for compatibility with guided-diffusion
-    raise NotImplementedError(
-        "Classifier model is not implemented in Squidiff. "
-        "This project uses MLPModel instead."
+
+
+    return EncoderUNetModel(
+        gene_size=gene_size,
+        in_channels=3,
+        model_channels=classifier_width,
+        out_channels=1000,
+        num_res_blocks=classifier_depth,
+        use_fp16=classifier_use_fp16,
+        num_head_channels=64,
+        use_scale_shift_norm=classifier_use_scale_shift_norm,
+        pool=classifier_pool,
     )
 
 
@@ -239,7 +246,6 @@ def sr_create_model_and_diffusion(
     use_checkpoint,
     use_scale_shift_norm,
     use_fp16,
-    use_encoder,
 ):
     model = sr_create_model(
         large_size,
@@ -285,14 +291,26 @@ def sr_create_model(
     use_scale_shift_norm,
     dropout,
     use_fp16,
-    use_encoder,
+    use_encoder
 ):
     _ = small_size  # hack to prevent unused variable
-    # Note: SuperResModel is not used in this project
-    # This function is kept for compatibility with guided-diffusion
-    raise NotImplementedError(
-        "Super-resolution model is not implemented in Squidiff. "
-        "This project uses MLPModel instead."
+
+
+    return SuperResModel(
+        gene_size=large_size,
+        in_channels=3,
+        model_channels=num_channels,
+        out_channels=(3 if not learn_sigma else 6),
+        num_res_blocks=num_res_blocks,
+        dropout=dropout,
+        num_classes=(NUM_CLASSES if class_cond else None),
+        use_checkpoint=use_checkpoint,
+        num_heads=num_heads,
+        num_head_channels=num_head_channels,
+        num_heads_upsample=num_heads_upsample,
+        use_scale_shift_norm=use_scale_shift_norm,
+        use_fp16=use_fp16,
+        use_encoder = use_encoder
     )
 
 
