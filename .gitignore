@@ -103,3 +103,5 @@ experiments/
 *.swp
 *.swo
 *~
+log.txt
+progress.csv
